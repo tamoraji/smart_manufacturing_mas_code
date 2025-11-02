@@ -171,6 +171,7 @@ class DynamicAnalysisAgent:
         self.model = RandomForestClassifier(random_state=42)
         self.model.fit(X_train, y_train)
         preds = self.model.predict(X_test)
+        train_preds = self.model.predict(X_train)
         acc = accuracy_score(y_test, preds)
         report = classification_report(y_test, preds, output_dict=True)
         logging.info(f"Random Forest accuracy: {acc:.4f}")
@@ -179,6 +180,7 @@ class DynamicAnalysisAgent:
             "accuracy": acc,
             "classification_report": report,
             "predictions": preds,
+            "train_predictions": train_preds,
             "X_test": X_test,
             "y_test": y_test,
             "feature_importances": self.model.feature_importances_,
@@ -197,6 +199,7 @@ class DynamicAnalysisAgent:
         self.model = LogisticRegression(max_iter=1000)
         self.model.fit(X_train, y_train)
         preds = self.model.predict(X_test)
+        train_preds = self.model.predict(X_train)
         acc = accuracy_score(y_test, preds)
         report = classification_report(y_test, preds, output_dict=True)
         logging.info(f"Logistic Regression accuracy: {acc:.4f}")
@@ -205,6 +208,7 @@ class DynamicAnalysisAgent:
             "accuracy": acc,
             "classification_report": report,
             "predictions": preds,
+            "train_predictions": train_preds,
             "X_test": X_test,
             "y_test": y_test
         }
@@ -221,6 +225,7 @@ class DynamicAnalysisAgent:
         self.model = SVC()
         self.model.fit(X_train, y_train)
         preds = self.model.predict(X_test)
+        train_preds = self.model.predict(X_train)
         acc = accuracy_score(y_test, preds)
         report = classification_report(y_test, preds, output_dict=True)
         logging.info(f"SVM accuracy: {acc:.4f}")
@@ -229,6 +234,7 @@ class DynamicAnalysisAgent:
             "accuracy": acc,
             "classification_report": report,
             "predictions": preds,
+            "train_predictions": train_preds,
             "X_test": X_test,
             "y_test": y_test
         }
