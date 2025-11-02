@@ -279,9 +279,19 @@ class DynamicAnalysisAgent:
         
         # Create anomaly detection results DataFrame
         # Use self.data for ID columns since X has ID columns dropped
+        # Handle both original column names and renamed pass-through columns (remainder__Machine_ID)
+        machine_id_col = None
+        for col in self.data.columns:
+            if 'MACHINE_ID' in col.upper():
+                machine_id_col = col
+                break
+        
+        if machine_id_col is None:
+            logging.warning(f"Machine_ID column not found in self.data. Columns available: {self.data.columns.tolist()}")
+        
         results_df = pd.DataFrame({
             'Timestamp': self.data['Timestamp'] if 'Timestamp' in self.data else pd.Series(range(len(X))),
-            'Machine_ID': self.data['Machine_ID'] if 'Machine_ID' in self.data else pd.Series(['Unknown'] * len(X)),
+            'Machine_ID': self.data[machine_id_col] if machine_id_col else pd.Series(['Unknown'] * len(X)),
             'Anomaly_Score': anomaly_scores,
             'Is_Anomaly': preds == -1
         })
@@ -334,6 +344,7 @@ class DynamicAnalysisAgent:
         self.model = RandomForestRegressor(n_estimators=n_estimators, max_depth=max_depth, random_state=random_state)
         self.model.fit(X_train, y_train)
         preds = self.model.predict(X_test)
+        train_preds = self.model.predict(X_train)
         
         mse = mean_squared_error(y_test, preds)
         r2 = r2_score(y_test, preds)
@@ -345,6 +356,7 @@ class DynamicAnalysisAgent:
             "mse": mse,
             "r2": r2,
             "predictions": preds,
+            "train_predictions": train_preds,
             "X_test": X_test,
             "y_test": y_test,
             "feature_importances": self.model.feature_importances_,
@@ -365,6 +377,7 @@ class DynamicAnalysisAgent:
         self.model = LinearRegression()
         self.model.fit(X_train, y_train)
         preds = self.model.predict(X_test)
+        train_preds = self.model.predict(X_train)
         
         mse = mean_squared_error(y_test, preds)
         r2 = r2_score(y_test, preds)
@@ -376,6 +389,7 @@ class DynamicAnalysisAgent:
             "mse": mse,
             "r2": r2,
             "predictions": preds,
+            "train_predictions": train_preds,
             "X_test": X_test,
             "y_test": y_test,
             "feature_names": X.columns.tolist()
@@ -396,6 +410,7 @@ class DynamicAnalysisAgent:
         self.model = Ridge(alpha=alpha)
         self.model.fit(X_train, y_train)
         preds = self.model.predict(X_test)
+        train_preds = self.model.predict(X_train)
         
         mse = mean_squared_error(y_test, preds)
         r2 = r2_score(y_test, preds)
@@ -407,6 +422,7 @@ class DynamicAnalysisAgent:
             "mse": mse,
             "r2": r2,
             "predictions": preds,
+            "train_predictions": train_preds,
             "X_test": X_test,
             "y_test": y_test,
             "feature_names": X.columns.tolist()
@@ -427,6 +443,7 @@ class DynamicAnalysisAgent:
         self.model = Lasso(alpha=alpha)
         self.model.fit(X_train, y_train)
         preds = self.model.predict(X_test)
+        train_preds = self.model.predict(X_train)
         
         mse = mean_squared_error(y_test, preds)
         r2 = r2_score(y_test, preds)
@@ -438,6 +455,7 @@ class DynamicAnalysisAgent:
             "mse": mse,
             "r2": r2,
             "predictions": preds,
+            "train_predictions": train_preds,
             "X_test": X_test,
             "y_test": y_test,
             "feature_names": X.columns.tolist()
@@ -459,6 +477,7 @@ class DynamicAnalysisAgent:
         self.model = SVR(kernel=kernel, C=C)
         self.model.fit(X_train, y_train)
         preds = self.model.predict(X_test)
+        train_preds = self.model.predict(X_train)
         
         mse = mean_squared_error(y_test, preds)
         r2 = r2_score(y_test, preds)
@@ -470,6 +489,7 @@ class DynamicAnalysisAgent:
             "mse": mse,
             "r2": r2,
             "predictions": preds,
+            "train_predictions": train_preds,
             "X_test": X_test,
             "y_test": y_test,
             "feature_names": X.columns.tolist()

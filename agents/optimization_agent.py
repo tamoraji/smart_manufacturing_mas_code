@@ -22,8 +22,16 @@ class OptimizationAgent:
         """
         logging.info("Initializing Optimization Agent...")
         self.results = analysis_results
-        if not all(k in self.results for k in ['test_data', 'test_predictions', 'feature_importances']):
-            raise ValueError("Analysis results are missing required keys for optimization.")
+        # Check for required keys based on analysis type
+        if 'results_df' in analysis_results:
+            # Anomaly detection results
+            if 'results_df' not in analysis_results or 'anomaly_labels' not in analysis_results:
+                raise ValueError("Anomaly detection results missing required keys: 'results_df' and 'anomaly_labels'")
+        else:
+            # Supervised learning results - train_predictions only needed for regression
+            required_keys = ['test_data', 'test_predictions', 'feature_importances']
+            if not all(k in self.results for k in required_keys):
+                raise ValueError("Analysis results are missing required keys for optimization.")
 
     def _assess_model_performance(self) -> Dict[str, Any]:
         """Assess model performance and provide context for recommendations."""
@@ -73,7 +81,7 @@ class OptimizationAgent:
         model_performance = self._assess_model_performance()
         logging.info(f"Model performance assessment: {model_performance}")
         
-        if 'regression_predictions' in self.results:
+        if 'train_predictions' in self.results:
             # Handle regression results
             results_df = self.results['test_data'].copy()
             results_df['Predicted_Value'] = self.results['test_predictions']

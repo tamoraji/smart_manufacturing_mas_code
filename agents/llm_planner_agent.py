@@ -130,6 +130,7 @@ class LLMPlannerAgent:
         self.feature_columns = feature_columns
         self.target_column = target_column
         self.problem_type = problem_type
+        self.full_dataset = None  # Store full dataset before filtering
         self.raw_data = None
         self.preprocessed_data = None
         self.analysis_results = None
@@ -204,10 +205,6 @@ class LLMPlannerAgent:
             
             logging.info(f"[LLM Planner] LLM decided: tool='{tool_name}', finish={finish_flag}, reason='{reason}'")
             
-            if finish_flag:
-                logging.info("[LLM Planner] LLM indicated the workflow is complete.")
-                break
-
             if tool_name not in self.tools:
                 logging.warning(f"[LLM Planner] LLM chose invalid tool: '{tool_name}'. Available: {available_tools}")
                 # Add error context and retry
@@ -277,6 +274,11 @@ class LLMPlannerAgent:
                         error_context += " - Consider: 1) Check analysis results quality, 2) Adjust recommendation thresholds, 3) Review data quality"
                 
                 workflow_context["last_error"] = error_context
+                
+            # Check if workflow should complete after executing the tool
+            if finish_flag:
+                logging.info("[LLM Planner] LLM indicated the workflow is complete after executing tool.")
+                break
                 
         logging.info("--- LLM-driven Workflow Finished ---")
         
@@ -445,10 +447,20 @@ class LLMPlannerAgent:
         self.raw_data = agent.load_data()
         if self.raw_data is None:
             return False, "Data loading failed."
+        
+        # Store full dataset before filtering (needed for anomaly detection Machine_ID mapping)
+        self.full_dataset = self.raw_data.copy()
             
         # Keep only selected columns (features + target for supervised, just features for anomaly detection)
         if self.problem_type == 'anomaly_detection':
-            self.raw_data = self.raw_data[self.feature_columns]
+            # For anomaly detection, auto-include ID columns if they exist and weren't selected
+            id_columns = [col for col in self.raw_data.columns if 'ID' in col.upper() or col.lower().endswith('_id') or col.lower() == 'id']
+            id_columns_to_add = [col for col in id_columns if col not in self.feature_columns]
+            if id_columns_to_add:
+                logging.info(f"Auto-including ID columns for anomaly detection: {id_columns_to_add}")
+                self.raw_data = self.raw_data[self.feature_columns + id_columns_to_add]
+            else:
+                self.raw_data = self.raw_data[self.feature_columns]
         else:
             self.raw_data = self.raw_data[self.feature_columns + [self.target_column]]
             
@@ -460,22 +472,23 @@ class LLMPlannerAgent:
             return False, "Cannot preprocess, raw_data is not loaded."
 
         # Handle preprocessing based on problem type
-        # Always use only feature columns for preprocessing (no target leakage)
-        data_for_preprocessing = self.raw_data[self.feature_columns]
-        
-        # For intelligent feature analysis, we need to pass target separately
-        if self.problem_type != 'anomaly_detection' and self.target_column:
+        # For anomaly detection, use raw_data directly (may include auto-added ID columns)
+        if self.problem_type == 'anomaly_detection':
+            analysis_data = self.raw_data  # Includes feature_columns + auto-added ID columns
+            target_col = None
+            protected_cols = list(self.raw_data.columns)  # Protect all columns including auto-added IDs
+        else:
+            # For supervised learning, use only feature columns
+            data_for_preprocessing = self.raw_data[self.feature_columns]
             target_col = self.target_column
             # Create a temporary dataframe with features + target for analysis only
             analysis_data = self.raw_data[self.feature_columns + [self.target_column]]
-        else:
-            target_col = None
-            analysis_data = data_for_preprocessing
+            protected_cols = self.feature_columns
         
         # Pass target column and problem type for intelligent feature analysis
         # Pass protected columns so that explicit feature selections are not dropped
         agent = PreprocessingAgent(analysis_data, target_column=target_col, problem_type=self.problem_type,
-                                   protected_columns=self.feature_columns)
+                                   protected_columns=protected_cols)
         processed_features = agent.preprocess()
         
         if processed_features is None:
@@ -553,12 +566,22 @@ class LLMPlannerAgent:
                 'feature': results['feature_names'],
                 'importance': results['feature_importances']
             }).sort_values(by='importance', ascending=False)
-        self.analysis_results = {
-            'evaluation': results,
-            'feature_importances': feature_importances,
-            'test_data_features': results.get('X_test'),
-            'test_predictions': results.get('predictions')
-        }
+        
+        # Store results based on problem type
+        if self.problem_type == 'anomaly_detection':
+            # Anomaly detection returns different structure
+            self.analysis_results = {
+                'evaluation': results
+            }
+        else:
+            # Supervised learning results
+            self.analysis_results = {
+                'evaluation': results,
+                'feature_importances': feature_importances,
+                'test_data_features': results.get('X_test'),
+                'test_predictions': results.get('predictions'),
+                'train_predictions': results.get('train_predictions')
+            }
         # Show appropriate metrics based on task type
         if self.problem_type == 'regression':
             r2 = results.get('r2', 'N/A')
@@ -575,8 +598,24 @@ class LLMPlannerAgent:
     def _execute_optimization_step(self):
         if self.analysis_results is None:
             return False, "Cannot optimize, analysis not done."
-        context = self.raw_data.loc[self.analysis_results['test_data_features'].index]
-        payload = {'test_data': context, 'test_predictions': self.analysis_results['test_predictions'], 'feature_importances': self.analysis_results['feature_importances']}
+        
+        # Handle different result structures for supervised vs anomaly detection
+        if self.problem_type == 'anomaly_detection':
+            # For anomaly detection, use results_df directly
+            payload = {
+                'results_df': self.analysis_results['evaluation'].get('results_df'),
+                'anomaly_labels': self.analysis_results['evaluation'].get('anomaly_labels')
+            }
+        else:
+            # For supervised learning, use test_data and predictions
+            context = self.raw_data.loc[self.analysis_results['test_data_features'].index]
+            payload = {
+                'test_data': context,
+                'test_predictions': self.analysis_results['test_predictions'],
+                'train_predictions': self.analysis_results.get('train_predictions'),
+                'feature_importances': self.analysis_results['feature_importances']
+            }
+        
         agent = OptimizationAgent(payload)
         recommendations = agent.generate_recommendations()
         if recommendations is None:
