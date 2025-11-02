@@ -1,0 +1,19 @@
+# CrewAI Smart Manufacturing System Requirements
+crewai>=0.28.0
+crewai-tools>=0.1.0
+
+# Existing dependencies
+google-generativeai
+python-dotenv
+pandas
+scikit-learn
+numpy
+
+# Additional dependencies for CrewAI
+langchain>=0.1.0
+langchain-google-genai>=1.0.0
+
+# Optional: For advanced features
+matplotlib
+seaborn
+plotly

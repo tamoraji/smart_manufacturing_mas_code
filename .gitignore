@@ -1,0 +1,45 @@
+# Ignore virtual environments
+mas_venv/
+venv/
+.venv/
+
+# Ignore Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.so
+
+# Ignore environment variables file
+.env
+
+# Ignore VSCode settings
+.vscode/
+.idea/
+
+# Ignore logs and outputs
+logs/
+*.log
+
+# Ignore test outputs
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Ignore OS files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Ignore Jupyter notebooks checkpoints
+.ipynb_checkpoints/
+
+# Ignore Python eggs
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Ignore data files (optional - uncomment if you don't want to share data)
+# data/

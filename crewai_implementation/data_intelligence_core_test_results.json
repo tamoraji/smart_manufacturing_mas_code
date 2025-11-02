@@ -1,0 +1,260 @@
+{
+  "dataset_path": "./data/Smart Manufacturing Maintenance Dataset/smart_maintenance_dataset.csv",
+  "shape": [
+    1430,
+    10
+  ],
+  "columns": [
+    "Machine_ID",
+    "Temp_C",
+    "Vibration_mm_s",
+    "Pressure_Bar",
+    "Acoustic_dB",
+    "Inspection_Duration_min",
+    "Downtime_Cost_USD",
+    "Technician_Availability_pct",
+    "Failure_Prob",
+    "Maintenance_Priority"
+  ],
+  "dtypes": {
+    "Machine_ID": "object",
+    "Temp_C": "float64",
+    "Vibration_mm_s": "float64",
+    "Pressure_Bar": "float64",
+    "Acoustic_dB": "float64",
+    "Inspection_Duration_min": "int64",
+    "Downtime_Cost_USD": "int64",
+    "Technician_Availability_pct": "int64",
+    "Failure_Prob": "float64",
+    "Maintenance_Priority": "int64"
+  },
+  "missing_values": {
+    "Machine_ID": 0,
+    "Temp_C": 0,
+    "Vibration_mm_s": 0,
+    "Pressure_Bar": 0,
+    "Acoustic_dB": 0,
+    "Inspection_Duration_min": 0,
+    "Downtime_Cost_USD": 0,
+    "Technician_Availability_pct": 0,
+    "Failure_Prob": 0,
+    "Maintenance_Priority": 0
+  },
+  "schema_discovery": {
+    "dataset_info": {
+      "shape": [
+        1430,
+        10
+      ],
+      "memory_usage_mb": 0.1705951690673828,
+      "total_null_percentage": 0.0
+    },
+    "columns": {
+      "Machine_ID": {
+        "name": "Machine_ID",
+        "type": "categorical",
+        "subtype": "string",
+        "issues": [],
+        "suggestions": [],
+        "stats": {
+          "count": 1430,
+          "null_count": "0",
+          "null_percentage": 0.0,
+          "unique_count": 10,
+          "unique_percentage": 0.6993006993006993
+        },
+        "role": "identifier"
+      },
+      "Temp_C": {
+        "name": "Temp_C",
+        "type": "numeric",
+        "subtype": "float",
+        "issues": [
+          "3 potential outliers"
+        ],
+        "suggestions": [],
+        "stats": {
+          "min": 41.48389483095322,
+          "max": 109.958777896001,
+          "mean": 75.45775993128755,
+          "std": 9.95729879816733,
+          "median": 75.47391421542048
+        },
+        "role": "feature"
+      },
+      "Vibration_mm_s": {
+        "name": "Vibration_mm_s",
+        "type": "numeric",
+        "subtype": "float",
+        "issues": [
+          "2 potential outliers"
+        ],
+        "suggestions": [],
+        "stats": {
+          "min": -0.8868137614883,
+          "max": 5.420752565885881,
+          "mean": 2.4929666834078366,
+          "std": 0.9937636726617611,
+          "median": 2.4930691073281936
+        },
+        "role": "feature"
+      },
+      "Pressure_Bar": {
+        "name": "Pressure_Bar",
+        "type": "numeric",
+        "subtype": "float",
+        "issues": [
+          "4 potential outliers"
+        ],
+        "suggestions": [],
+        "stats": {
+          "min": 3.477035584459194,
+          "max": 7.026275061105978,
+          "mean": 5.006490024033493,
+          "std": 0.49371754539586515,
+          "median": 5.000584443194031
+        },
+        "role": "feature"
+      },
+      "Acoustic_dB": {
+        "name": "Acoustic_dB",
+        "type": "numeric",
+        "subtype": "float",
+        "issues": [
+          "4 potential outliers"
+        ],
+        "suggestions": [],
+        "stats": {
+          "min": 35.33095843127842,
+          "max": 97.9897953029466,
+          "mean": 70.16797303677912,
+          "std": 10.134302063632267,
+          "median": 70.21944334698583
+        },
+        "role": "feature"
+      },
+      "Inspection_Duration_min": {
+        "name": "Inspection_Duration_min",
+        "type": "numeric",
+        "subtype": "integer",
+        "issues": [],
+        "suggestions": [],
+        "stats": {
+          "min": "30",
+          "max": "149",
+          "mean": 89.21748251748252,
+          "std": 34.830122205242034,
+          "median": 89.0
+        },
+        "role": "feature"
+      },
+      "Downtime_Cost_USD": {
+        "name": "Downtime_Cost_USD",
+        "type": "numeric",
+        "subtype": "integer",
+        "issues": [],
+        "suggestions": [],
+        "stats": {
+          "min": "502",
+          "max": "4998",
+          "mean": 2718.5685314685315,
+          "std": 1296.4305074821875,
+          "median": 2681.5
+        },
+        "role": "timestamp"
+      },
+      "Technician_Availability_pct": {
+        "name": "Technician_Availability_pct",
+        "type": "numeric",
+        "subtype": "integer",
+        "issues": [],
+        "suggestions": [],
+        "stats": {
+          "min": "50",
+          "max": "99",
+          "mean": 74.43006993006993,
+          "std": 14.450429419985355,
+          "median": 74.0
+        },
+        "role": "feature"
+      },
+      "Failure_Prob": {
+        "name": "Failure_Prob",
+        "type": "numeric",
+        "subtype": "float",
+        "issues": [
+          "1 potential outliers"
+        ],
+        "suggestions": [],
+        "stats": {
+          "min": 0.31,
+          "max": 0.66,
+          "mean": 0.49196503496503496,
+          "std": 0.05689774661753074,
+          "median": 0.49
+        },
+        "role": "feature"
+      },
+      "Maintenance_Priority": {
+        "name": "Maintenance_Priority",
+        "type": "numeric",
+        "subtype": "integer",
+        "issues": [],
+        "suggestions": [],
+        "stats": {
+          "min": "1",
+          "max": "3",
+          "mean": 1.8363636363636364,
+          "std": 0.4904326726212797,
+          "median": 2.0
+        },
+        "role": "target"
+      }
+    },
+    "suggested_targets": [
+      {
+        "column": "Maintenance_Priority",
+        "score": 50,
+        "reasons": [
+          "Name suggests target variable"
+        ],
+        "suggested_task": "regression"
+      }
+    ],
+    "preprocessing_suggestions": [
+      "Identifier columns detected: ['Machine_ID'] - exclude from modeling",
+      "Timestamp columns detected: ['Downtime_Cost_USD'] - consider time feature extraction",
+      "Numeric columns (9): Consider scaling/normalization",
+      "Categorical columns (1): Consider encoding strategy"
+    ],
+    "data_quality_issues": []
+  },
+  "column_roles": {
+    "Machine_ID": "identifier",
+    "Temp_C": "feature",
+    "Vibration_mm_s": "feature",
+    "Pressure_Bar": "feature",
+    "Acoustic_dB": "feature",
+    "Inspection_Duration_min": "feature",
+    "Downtime_Cost_USD": "timestamp",
+    "Technician_Availability_pct": "feature",
+    "Failure_Prob": "feature",
+    "Maintenance_Priority": "target"
+  },
+  "data_quality": {
+    "completeness": 100.0,
+    "duplicates": "0"
+  },
+  "manufacturing_features": {
+    "sensor_columns": [
+      "Vibration_mm_s",
+      "Pressure_Bar",
+      "Acoustic_dB"
+    ],
+    "maintenance_columns": [
+      "Downtime_Cost_USD",
+      "Failure_Prob",
+      "Maintenance_Priority"
+    ]
+  }
+}
