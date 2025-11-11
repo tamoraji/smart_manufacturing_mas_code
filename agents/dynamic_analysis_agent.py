@@ -48,11 +48,16 @@ class DynamicAnalysisAgent:
         else:
             # Use ToolDecider for model selection
             data_summary = create_data_summary(self.data)
-            available_models = ["RandomForestClassifier", "LogisticRegression", "SVC", 
-                              "RandomForestRegressor", "LinearRegression", "Ridge", "Lasso", "SVR"]
+            if self.task == "classification":
+                available_models = ["LogisticRegression", "RandomForestClassifier", "SVC"]
+            elif self.task == "regression":
+                available_models = ["LinearRegression", "Ridge", "Lasso", "RandomForestRegressor", "SVR"]
+            else:
+                available_models = ["RandomForestClassifier", "LogisticRegression", "SVC"]
             
             decision = self.tool_decider.decide_model_family(self.task, data_summary, available_models)
-            self.model_name = decision.get("model", "RandomForestClassifier")
+            default_model = "LinearRegression" if self.task == "regression" else "RandomForestClassifier"
+            self.model_name = decision.get("model", default_model)
             logging.info(f"ToolDecider selected tool: {self.model_name}, reason: {decision.get('reason', 'N/A')}")
             
         return self.model_name
@@ -89,6 +94,8 @@ class DynamicAnalysisAgent:
         elif tool == "SVR":
             return self._run_svr()
         else:
+            if self.task == "regression":
+                return self._run_linear_regression()
             return self._run_random_forest()
 
     def _try_multiple_models(self) -> Optional[Dict[str, Any]]:
@@ -106,10 +113,10 @@ class DynamicAnalysisAgent:
             ]
         elif self.task == "regression":
             model_candidates = [
-                ("RandomForestRegressor", self._run_random_forest_regressor),
                 ("LinearRegression", self._run_linear_regression),
                 ("Ridge", self._run_ridge),
                 ("Lasso", self._run_lasso),
+                ("RandomForestRegressor", self._run_random_forest_regressor),
                 ("SVR", self._run_svr)
             ]
         else:

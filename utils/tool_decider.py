@@ -95,10 +95,10 @@ class RuleBasedToolDecider(ToolDecider):
             else:
                 model = "RandomForestClassifier"
         elif task_type == "regression":
-            if n_samples < 1000:
-                model = "LinearRegression"
+            if n_features > 50:
+                model = "Ridge"
             else:
-                model = "RandomForestRegressor"
+                model = "LinearRegression"
         elif task_type == "anomaly_detection":
             model = "IsolationForest"
         else:

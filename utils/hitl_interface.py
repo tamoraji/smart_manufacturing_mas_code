@@ -124,6 +124,28 @@ class HitlInterface(ABC):
         # Show the information
         self.show_info(message, data)
 
+    def show_warning(self, message: str, data: Optional[Any] = None):
+        """
+        Display warning information. By default, delegates to show_info with a warning prefix.
+        Subclasses can override for custom rendering.
+        """
+        warning_message = f"⚠️ {message}"
+        self.show_info(warning_message, data)
+
+    def show_warning_with_audit(self, message: str, data: Optional[Any] = None,
+                                context: Optional[Dict[str, Any]] = None):
+        """
+        Show warning information with audit logging.
+        """
+        context = context or {}
+        context.update({
+            "warning_message": message,
+            "data_type": type(data).__name__ if data is not None else None
+        })
+
+        self._log_audit("warning_display", context, system_response=message)
+        self.show_warning(message, data)
+
 
 class CliHitlInterface(HitlInterface):
     """CLI-based HITL interface implementation."""

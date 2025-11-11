@@ -3,7 +3,7 @@ import os
 import time
 import google.generativeai as genai
 from dotenv import load_dotenv
-from typing import Optional, Any, Dict
+from typing import Optional, Any, Dict, Tuple
 from agents.data_loader_agent import DataLoaderAgent
 from agents.preprocessing_agent import PreprocessingAgent
 from agents.dynamic_analysis_agent import DynamicAnalysisAgent
@@ -525,14 +525,46 @@ class LLMPlannerAgent:
         agent = DynamicAnalysisAgent(self.preprocessed_data, self.target_column, task=self.problem_type, params=params)
         results = agent.run()
         
-        # Check if performance is poor and try adaptive intelligence
+        # User-in-the-loop decision for poor performance
         adaptive_intelligence_used = False
         tried_models = []
         if results and self._is_poor_performance(results):
-            logging.info("🧠 Poor performance detected! Trying adaptive intelligence with multiple models...")
-            tried_models = agent.tried_models.copy() if hasattr(agent, 'tried_models') else []
-            results = agent.run(force_retry=True)
-            adaptive_intelligence_used = True
+            metric_label, metric_value = self._performance_metric(results)
+            if metric_label and metric_value is not None:
+                self.hitl_interface.show_warning_with_audit(
+                    f"Model performance is low ({metric_label} = {metric_value:.3f}).",
+                    context={
+                        "step": "low_performance_warning",
+                        "metric_label": metric_label,
+                        "metric_value": float(metric_value),
+                        "task": self.problem_type
+                    }
+                )
+                decision = self.hitl_interface.prompt_with_audit(
+                    "Would you like to retry with alternative models?",
+                    options=["retry", "proceed"],
+                    context={
+                        "step": "low_performance_decision",
+                        "metric_label": metric_label,
+                        "metric_value": float(metric_value)
+                    }
+                ).lower()
+                if decision == "retry":
+                    logging.info("🧠 User requested adaptive retry due to low performance...")
+                    tried_models = agent.tried_models.copy() if hasattr(agent, 'tried_models') else []
+                    results = agent.run(force_retry=True)
+                    adaptive_intelligence_used = True
+                    if results is None:
+                        return False, "Dynamic analysis failed after retry."
+                else:
+                    self.hitl_interface.show_info_with_audit(
+                        "Proceeding with current model results.",
+                        context={
+                            "step": "low_performance_proceed",
+                            "metric_label": metric_label,
+                            "metric_value": float(metric_value)
+                        }
+                    )
         
         if results is None or ("accuracy" in results and results["accuracy"] is None):
             return False, "Dynamic analysis failed."
@@ -750,6 +782,18 @@ class LLMPlannerAgent:
             return accuracy < 0.6  # Poor accuracy
         else:  # anomaly_detection
             return False  # No clear performance metric for anomaly detection
+
+    def _performance_metric(self, results: Dict[str, Any]) -> Tuple[Optional[str], Optional[float]]:
+        """Return the primary performance metric label and value for the current task."""
+        if self.problem_type == "regression":
+            r2 = results.get("r2")
+            if r2 is not None:
+                return "R²", r2
+        elif self.problem_type == "classification":
+            accuracy = results.get("accuracy")
+            if accuracy is not None:
+                return "Accuracy", accuracy
+        return None, None
 
     # ---- New helper methods for LLM-driven hyperparameter suggestions and HITL ----
     def _build_dataset_summary(self, df: pd.DataFrame) -> str:

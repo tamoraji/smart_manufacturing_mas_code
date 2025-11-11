@@ -1,7 +1,7 @@
 
 import pandas as pd
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 import numpy as np
 
 # Configure logging
@@ -66,6 +66,160 @@ class OptimizationAgent:
                 performance['recommendation_confidence'] = 'Low'
         
         return performance
+
+    def _infer_target_column(self, data: pd.DataFrame, predictions) -> str:
+        """Attempt to infer the target column by matching prediction values."""
+        try:
+            prediction_strings = set(pd.Series(predictions).astype(str).unique())
+        except Exception:
+            prediction_strings = set(str(p) for p in set(predictions))
+
+        for column in data.columns:
+            series = data[column]
+            try:
+                values = set(series.astype(str).unique())
+            except Exception:
+                values = set(series.apply(str).unique())
+            if prediction_strings.issubset(values):
+                return column
+        return ""
+
+    @staticmethod
+    def _is_numeric_label(label) -> bool:
+        if isinstance(label, (int, float, np.number)):
+            return True
+        if isinstance(label, str):
+            try:
+                float(label)
+                return True
+            except ValueError:
+                return False
+        return False
+
+    def _score_from_keywords(self, label: str, target_column: str) -> float:
+        """Derive a priority score (1-3) based on label semantics and context."""
+        label_lower = str(label).strip().lower()
+        if not label_lower:
+            return 2.0
+
+        target_lower = target_column.lower() if target_column else ""
+
+        # Context where lower textual value implies higher risk (e.g., efficiency, health)
+        invert_low_high = any(
+            keyword in target_lower
+            for keyword in ["efficiency", "performance", "quality", "health", "uptime", "score", "yield"]
+        )
+
+        # Priority-specific cues override general rules
+        if "priority" in label_lower or "risk" in label_lower or "severity" in label_lower:
+            if "high" in label_lower:
+                return 3.0
+            if "medium" in label_lower:
+                return 2.0
+            if "low" in label_lower:
+                return 1.0
+
+        high_severity_keywords = [
+            "critical", "urgent", "fail", "failure", "fault", "alarm",
+            "down", "offline", "shutdown", "alert", "incident", "unsafe",
+            "issue", "anomaly", "breach", "hazard", "poor", "degraded", "risk"
+        ]
+        medium_severity_keywords = [
+            "medium", "moderate", "warning", "reduced", "caution",
+            "watch", "elevated", "unstable", "attention"
+        ]
+        low_severity_keywords = [
+            "normal", "ok", "good", "optimal", "stable",
+            "healthy", "excellent", "nominal", "efficient"
+        ]
+
+        # Handle generic "high"/"low" depending on context
+        if invert_low_high:
+            high_severity_keywords.append("low")
+            low_severity_keywords.append("high")
+        else:
+            high_severity_keywords.append("high")
+            low_severity_keywords.append("low")
+
+        for keyword in high_severity_keywords:
+            if keyword in label_lower:
+                return 3.0
+        for keyword in medium_severity_keywords:
+            if keyword in label_lower:
+                return 2.0
+        for keyword in low_severity_keywords:
+            if keyword in label_lower:
+                return 1.0
+
+        # Default when semantics are unclear
+        return 2.0
+
+    def _derive_priority_mapping(self, predictions, target_column: str) -> Dict[Any, float]:
+        """Create a mapping from prediction labels to numeric priority scores."""
+        unique_seen = []
+        for label in predictions:
+            if label not in unique_seen:
+                unique_seen.append(label)
+
+        numeric_labels = []
+        mapping: Dict[Any, float] = {}
+
+        for label in unique_seen:
+            if self._is_numeric_label(label):
+                try:
+                    numeric_value = float(label)
+                except ValueError:
+                    numeric_value = float(str(label))
+                numeric_labels.append((label, numeric_value))
+            else:
+                mapping[label] = self._score_from_keywords(label, target_column)
+
+        if numeric_labels:
+            numeric_values = [value for _, value in numeric_labels]
+            min_val = min(numeric_values)
+            max_val = max(numeric_values)
+            for original_label, numeric_value in numeric_labels:
+                if max_val == min_val:
+                    score = 2.0
+                else:
+                    score = 1.0 + 2.0 * ((numeric_value - min_val) / (max_val - min_val))
+                mapping[original_label] = float(score)
+
+        return mapping
+
+    def _build_contributing_factors(self, row: pd.Series, feature_names: list[str]) -> str:
+        factors = []
+        for feature in feature_names:
+            if feature not in row:
+                continue
+            value = row[feature]
+            if isinstance(value, (int, float, np.number)):
+                factors.append(f"{feature}={value:.2f}")
+            else:
+                factors.append(f"{feature}={value}")
+        return ", ".join(factors)
+
+    def _action_plan_from_score(self, score: float) -> Dict[str, str]:
+        if score >= 2.5:
+            return {
+                "priority_level": "Critical",
+                "action": "IMMEDIATE: Dispatch maintenance team to investigate and recover performance.",
+                "cost": "High ($5,000+)",
+                "timeframe": "Within 24-48 hours"
+            }
+        if score >= 1.5:
+            return {
+                "priority_level": "Elevated",
+                "action": "Schedule targeted maintenance in the upcoming service window.",
+                "cost": "Medium ($1,000-$5,000)",
+                "timeframe": "Within 1-2 weeks"
+            }
+        return {
+            "priority_level": "Low",
+            "action": "Continue monitoring and maintain current operating procedures.",
+            "cost": "Low (<$1,000)",
+            "timeframe": "Next scheduled maintenance"
+        }
 
     def generate_recommendations(self) -> pd.DataFrame:
         """
@@ -140,7 +294,14 @@ class OptimizationAgent:
                 
         elif 'anomaly_labels' in self.results:
             # Handle anomaly detection results
-            results_df = self.results['results_df']
+            results_df = self.results['results_df'].copy()
+
+            if not results_df.empty:
+                identifier_cols = [col for col in results_df.columns if col.startswith("identifier__")]
+                if identifier_cols:
+                    for id_col in identifier_cols:
+                        results_df[id_col.replace("identifier__", "")] = results_df[id_col]
+
             anomalous = results_df[results_df['Is_Anomaly']]
             
             if anomalous.empty:
@@ -190,103 +351,78 @@ class OptimizationAgent:
             return recommendations_df
             
         else:
-            # Handle classification results with enhanced insights
-            recommendations_df = self.results['test_data'].copy()
-            recommendations_df['Predicted_Priority'] = self.results['test_predictions']
-            
-            # Get top contributing features (with error handling)
-            if self.results.get('feature_importances') is not None and 'feature' in self.results['feature_importances']:
-                top_features = self.results['feature_importances']['feature'].head(3).tolist()
-                feature_names = [f.replace('num__', '').replace('cat__', '') for f in top_features]
-            else:
-                # Fallback: use column names from the data
-                feature_names = list(self.results['test_data'].columns)[:3] if 'test_data' in self.results else ['Feature1', 'Feature2', 'Feature3']
-                logging.warning("Feature importances not available, using column names as fallback")
-            
-            # Generate recommendations for all priority levels
+            # Handle classification results with enhanced, label-aware insights
+            results_df = self.results['test_data'].copy()
+            predictions = pd.Series(self.results['test_predictions'], index=results_df.index, name="Predicted_Label")
+            results_df['Predicted_Label'] = predictions
+
+            target_column = self._infer_target_column(results_df, predictions)
+            priority_mapping = self._derive_priority_mapping(predictions, target_column)
+
+            default_score = 2.0 if priority_mapping else 2.0
+            results_df['Priority_Score'] = results_df['Predicted_Label'].map(priority_mapping).fillna(default_score)
+
+            # Prepare feature context
+            feature_names = []
+            if (
+                self.results.get('feature_importances') is not None
+                and not self.results['feature_importances'].empty
+                and 'feature' in self.results['feature_importances']
+            ):
+                feature_names = [
+                    f.replace('num__', '').replace('cat__', '')
+                    for f in self.results['feature_importances']['feature'].head(3).tolist()
+                ]
+            elif 'test_data' in self.results:
+                feature_names = [
+                    col for col in self.results['test_data'].columns
+                    if col not in {'Machine_ID', 'Timestamp'}
+                ][:3]
+
+            prioritized = results_df.sort_values('Priority_Score', ascending=False)
+            if 'Machine_ID' in prioritized.columns:
+                prioritized = prioritized.dropna(subset=['Machine_ID'])
+                prioritized = prioritized.drop_duplicates(subset=['Machine_ID'], keep='first')
+
+            max_recommendations = 30
+            prioritized = prioritized.head(max_recommendations)
+
             recommendations = []
-            
-            # High priority (3) - Critical maintenance needed
-            high_priority = recommendations_df[recommendations_df['Predicted_Priority'] == 3].copy()
-            for _, row in high_priority.iterrows():
-                # Analyze specific feature values contributing to high priority
-                contributing_factors = []
-                for feature in top_features:
-                    clean_name = feature.replace('num__', '').replace('cat__', '')
-                    if clean_name in row.index:
-                        value = row[clean_name]
-                        contributing_factors.append(f"{clean_name}: {value:.2f}")
-                
+            for _, row in prioritized.iterrows():
+                score = float(row.get('Priority_Score', default_score))
+                label_text = str(row.get('Predicted_Label', 'Unknown'))
+                action_plan = self._action_plan_from_score(score)
+                contributing = self._build_contributing_factors(row, feature_names)
+
+                reason = f"Model predicted '{label_text}' for the current operating state."
+                if feature_names:
+                    readable_features = ", ".join(feature_names)
+                    reason += f" Key drivers include: {readable_features}."
+
                 recommendations.append({
                     'Machine_ID': row.get('Machine_ID', 'Unknown'),
-                    'Priority_Level': 'Critical (3)',
-                    'Priority_Score': 3.0,
-                    'Contributing_Factors': ', '.join(contributing_factors),
-                    'Reason_for_Action': f"Critical maintenance predicted based on: {', '.join(feature_names)}",
-                    'Recommended_Action': "IMMEDIATE: Schedule emergency inspection and prepare for component replacement",
-                    'Estimated_Cost': "High ($5,000-$50,000)",
-                    'Timeframe': "Within 24-48 hours",
+                    'Predicted_Label': label_text,
+                    'Priority_Level': action_plan['priority_level'],
+                    'Priority_Score': round(score, 2),
+                    'Contributing_Factors': contributing if contributing else "Model-driven signals (top features unavailable).",
+                    'Reason_for_Action': reason,
+                    'Recommended_Action': action_plan['action'],
+                    'Estimated_Cost': action_plan['cost'],
+                    'Timeframe': action_plan['timeframe'],
                     'Model_Confidence': model_performance['recommendation_confidence']
                 })
-            
-            # Medium priority (2) - Preventive maintenance
-            medium_priority = recommendations_df[recommendations_df['Predicted_Priority'] == 2].copy()
-            for _, row in medium_priority.iterrows():
-                # Analyze specific feature values contributing to medium priority
-                contributing_factors = []
-                for feature in top_features:
-                    clean_name = feature.replace('num__', '').replace('cat__', '')
-                    if clean_name in row.index:
-                        value = row[clean_name]
-                        contributing_factors.append(f"{clean_name}: {value:.2f}")
-                
-                recommendations.append({
-                    'Machine_ID': row.get('Machine_ID', 'Unknown'),
-                    'Priority_Level': 'Medium (2)',
-                    'Priority_Score': 2.0,
-                    'Contributing_Factors': ', '.join(contributing_factors) if contributing_factors else "Moderate risk indicators detected",
-                    'Reason_for_Action': f"Preventive maintenance recommended based on: {', '.join(feature_names)}",
-                    'Recommended_Action': "Schedule routine inspection and minor maintenance",
-                    'Estimated_Cost': "Medium ($500-$5,000)",
-                    'Timeframe': "Within 1-2 weeks",
-                    'Model_Confidence': model_performance['recommendation_confidence']
-                })
-            
-            # Low priority (1) - Monitoring
-            low_priority = recommendations_df[recommendations_df['Predicted_Priority'] == 1].copy()
-            for _, row in low_priority.iterrows():
-                # Analyze specific feature values contributing to low priority
-                contributing_factors = []
-                for feature in top_features:
-                    clean_name = feature.replace('num__', '').replace('cat__', '')
-                    if clean_name in row.index:
-                        value = row[clean_name]
-                        contributing_factors.append(f"{clean_name}: {value:.2f}")
-                
-                recommendations.append({
-                    'Machine_ID': row.get('Machine_ID', 'Unknown'),
-                    'Priority_Level': 'Low (1)',
-                    'Priority_Score': 1.0,
-                    'Contributing_Factors': ', '.join(contributing_factors) if contributing_factors else "Normal operating parameters",
-                    'Reason_for_Action': f"Continue monitoring based on: {', '.join(feature_names)}",
-                    'Recommended_Action': "Continue routine monitoring and scheduled maintenance",
-                    'Estimated_Cost': "Low ($100-$500)",
-                    'Timeframe': "Next scheduled maintenance",
-                    'Model_Confidence': model_performance['recommendation_confidence']
-                })
-            
+
             if recommendations:
-                recommendations_df = pd.DataFrame(recommendations)
-                
-                # Add model performance warning if needed
+                recommendations_df = pd.DataFrame(recommendations).sort_values('Priority_Score', ascending=False)
+
                 if model_performance['reliability_warning']:
                     logging.warning(f"⚠️ {model_performance['reliability_warning']}")
                     recommendations_df['Model_Warning'] = model_performance['reliability_warning']
-                
-                return recommendations_df.sort_values('Priority_Score', ascending=False)
-            else:
-                logging.info("No maintenance recommendations generated.")
-                return pd.DataFrame()
+
+                return recommendations_df
+
+            logging.info("No maintenance recommendations generated.")
+            return pd.DataFrame()
 
     def generate_summary_report(self, recommendations_df: pd.DataFrame) -> str:
         """Generate a human-readable summary report of recommendations."""

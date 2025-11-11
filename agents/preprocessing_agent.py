@@ -53,6 +53,27 @@ class PreprocessingAgent:
         """Identifies numerical and categorical features in the dataset."""
         numerical_features = self.data.select_dtypes(include=['int64', 'float64']).columns.tolist()
         categorical_features = self.data.select_dtypes(include=['object', 'category']).columns.tolist()
+
+        if self.problem_type == 'anomaly_detection':
+            kept_identifiers = []
+            protected_set = set(self.protected_columns)
+
+            for feature in list(numerical_features):
+                upper_name = feature.upper()
+                if ('ID' in upper_name or upper_name.endswith('_ID') or upper_name == 'ID') and feature in protected_set:
+                    kept_identifiers.append(feature)
+                    numerical_features.remove(feature)
+
+            if kept_identifiers:
+                logging.info(f"Protected identifier columns for anomaly detection: {kept_identifiers}")
+                passthrough_df = self.data[kept_identifiers].copy()
+                passthrough_df.columns = [f"identifier__{col}" for col in kept_identifiers]
+                self.data = pd.concat([self.data, passthrough_df], axis=1)
+                self.identifier_columns = [f"identifier__{col}" for col in kept_identifiers]
+            else:
+                self.identifier_columns = []
+        else:
+            self.identifier_columns = []
         logging.info(f"Identified Numerical Features: {numerical_features}")
         logging.info(f"Identified Categorical Features: {categorical_features}")
         return numerical_features, categorical_features
@@ -189,7 +210,7 @@ class PreprocessingAgent:
             for feature in categorical_features:
                 if feature not in self.protected_columns:  # Don't drop protected features
                     unique_count = self.data[feature].nunique()
-                    if unique_count > 50:  # Threshold for high cardinality
+                    if unique_count > 50 and not feature.startswith("identifier__"):  # Threshold for high cardinality
                         cols_to_drop.append(feature)
                         logging.warning(f"Dropping high cardinality feature '{feature}' ({unique_count} unique values)")
             
