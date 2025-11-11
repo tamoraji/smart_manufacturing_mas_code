@@ -309,35 +309,78 @@ class OptimizationAgent:
                 return pd.DataFrame()
             
             # Group anomalies by Machine_ID
-            machine_anomalies = anomalous.groupby('Machine_ID').agg({
+            agg_spec = {
                 'Is_Anomaly': 'count',
-                'Anomaly_Score': 'mean'
-            }).reset_index()
-            
-            machine_anomalies.columns = ['Machine_ID', 'Anomaly_Count', 'Avg_Anomaly_Score']
+                'Anomaly_Score': ['mean', 'min', 'max']
+            }
+            if 'Timestamp' in anomalous.columns:
+                agg_spec['Timestamp'] = ['min', 'max']
+            machine_anomalies = anomalous.groupby('Machine_ID').agg(agg_spec)
+            machine_anomalies.columns = ['Anomaly_Count', 'Avg_Anomaly_Score', 'Min_Anomaly_Score', 'Max_Anomaly_Score'] + (
+                ['First_Anomaly_Time', 'Last_Anomaly_Time'] if 'Timestamp' in anomalous.columns else []
+            )
+            machine_anomalies = machine_anomalies.reset_index()
             machine_anomalies = machine_anomalies.sort_values('Avg_Anomaly_Score')
             
             # Generate recommendations for each anomalous machine
             recommendations = []
+            zscore_columns = [col for col in anomalous.columns if col.endswith('_zscore')]
             for _, row in machine_anomalies.iterrows():
                 machine_data = anomalous[anomalous['Machine_ID'] == row['Machine_ID']]
                 
-                # Find the most extreme deviations
-                extreme_cols = []
-                for col in machine_data.columns:
-                    if col.endswith('_zscore'):
-                        metric = col.replace('_zscore', '')
-                        mean_zscore = machine_data[col].mean()
-                        if abs(mean_zscore) > 2:  # More than 2 standard deviations
-                            extreme_cols.append(f"{metric} ({mean_zscore:.1f}σ)")
-                
+                feature_signals = []
+                for z_col in zscore_columns:
+                    metric = z_col.replace('_zscore', '')
+                    mean_z = machine_data[z_col].mean()
+                    if np.isnan(mean_z):
+                        continue
+                    value_col = f"{metric}_Value"
+                    mean_val = machine_data[value_col].mean() if value_col in machine_data else None
+                    feature_signals.append((metric, mean_z, mean_val))
+                feature_signals.sort(key=lambda item: abs(item[1]), reverse=True)
+
+                top_signals = feature_signals[:3]
+                has_signals = len(top_signals) > 0
+                indicators = []
+                max_abs_z = 0.0
+                for metric, mean_z, mean_val in top_signals:
+                    max_abs_z = max(max_abs_z, abs(mean_z))
+                    if mean_val is not None and not np.isnan(mean_val):
+                        indicators.append(f"{metric}: z={mean_z:.2f}, mean≈{mean_val:.2f}")
+                    else:
+                        indicators.append(f"{metric}: z={mean_z:.2f}")
+                indicator_text = "; ".join(indicators) if indicators else "Signal strength insufficient to isolate drivers."
+
+                if max_abs_z >= 3:
+                    recommended_action = "Schedule immediate diagnostic assessment"
+                    priority_level = "Critical"
+                elif max_abs_z >= 2:
+                    recommended_action = "Schedule inspection and targeted monitoring"
+                    priority_level = "Elevated"
+                else:
+                    recommended_action = "Monitor these parameters closely"
+                    priority_level = "Advisory"
+
+                first_anomaly_time = row['First_Anomaly_Time'] if 'First_Anomaly_Time' in row else None
+                last_anomaly_time = row['Last_Anomaly_Time'] if 'Last_Anomaly_Time' in row else None
+
                 recommendations.append({
                     'Machine_ID': row['Machine_ID'],
                     'Priority_Score': abs(row['Avg_Anomaly_Score']),
                     'Anomaly_Count': row['Anomaly_Count'],
-                    'Reason_for_Action': f"Anomalous behavior detected in: {', '.join(extreme_cols)}",
-                    'Recommended_Action': "Schedule inspection and diagnostic testing" if len(extreme_cols) > 2 
-                                       else "Monitor these parameters closely"
+                    'Avg_Anomaly_Score': row['Avg_Anomaly_Score'],
+                    'Most_Anomalous_Score': row['Min_Anomaly_Score'],
+                    'Least_Anomalous_Score': row['Max_Anomaly_Score'],
+                    'First_Anomaly_Time': first_anomaly_time,
+                    'Last_Anomaly_Time': last_anomaly_time,
+                    'Top_Indicators': indicator_text,
+                    'Contributing_Factors': indicator_text if has_signals else None,
+                    'Priority_Level': priority_level,
+                    'Reason_for_Action': (
+                        f"Detected recurrent anomalies. Top signals: {indicator_text}"
+                        if has_signals else "Detected recurrent anomalies across monitored features."
+                    ),
+                    'Recommended_Action': recommended_action
                 })
             
             recommendations_df = pd.DataFrame(recommendations)

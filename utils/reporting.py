@@ -20,10 +20,13 @@ class WorkflowReporter:
         self.output_dir = output_dir
         self.report_data = {
             'workflow_start': datetime.now().isoformat(),
+            'workflow_goal': None,
             'steps': [],
             'performance_metrics': {},
             'feature_analysis': {},
             'recommendations': {},
+            'stage_summaries': [],
+            'hitl_events': [],
             'errors': [],
             'summary': {}
         }
@@ -57,6 +60,40 @@ class WorkflowReporter:
                     logging.info(f"   📊 {key}: {json.dumps(value, indent=2)}")
                 else:
                     logging.info(f"   📊 {key}: {value}")
+    
+    def log_stage_summary(self, stage_name: str, summary: str, stats: Optional[Dict[str, Any]] = None):
+        """
+        Log a structured stage summary with optional bullet-point statistics.
+        """
+        stats = stats or {}
+        self.report_data['stage_summaries'].append({
+            'stage_name': stage_name,
+            'summary': summary,
+            'stats': stats
+        })
+
+        logging.info("")
+        logging.info(f"--- {stage_name} ---")
+        logging.info(summary)
+        for key, value in stats.items():
+            logging.info(f"   • {key}: {value}")
+    
+    def log_hitl_event(self, title: str, decision: str, metadata: Optional[Dict[str, Any]] = None):
+        """
+        Log a human-in-the-loop interaction with explicit console output and persistence.
+        """
+        metadata = metadata or {}
+        event_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "title": title,
+            "decision": decision,
+            "metadata": metadata
+        }
+        self.report_data['hitl_events'].append(event_entry)
+
+        context_bits = ", ".join(f"{k}={v}" for k, v in metadata.items()) if metadata else ""
+        suffix = f" ({context_bits})" if context_bits else ""
+        logging.info(f"👤 HITL · {title}: {decision}{suffix}")
     
     def log_performance_metrics(self, metrics: Dict[str, Any]):
         """Log model performance metrics with enhanced formatting."""
@@ -144,6 +181,52 @@ class WorkflowReporter:
             for key, value in context.items():
                 logging.error(f"   Context: {key} = {value}")
     
+    def save_publication_snapshot(self, filename_prefix: Optional[str] = None) -> Dict[str, Optional[str]]:
+        """
+        Save a compact, publication-ready snapshot of the workflow including stage summaries,
+        key metrics, and a trimmed recommendation table.
+        """
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        prefix = filename_prefix or f"publication_snapshot_{timestamp}"
+        json_path = os.path.join(self.output_dir, f"{prefix}.json")
+        csv_path = None
+
+        snapshot = {
+            "generated_at": datetime.now().isoformat(),
+            "stage_summaries": self.report_data.get('stage_summaries', []),
+            "performance_metrics": self.report_data.get('performance_metrics', {}),
+            "workflow_summary": self.report_data.get('summary', {})
+        }
+
+        recommendations_obj = self.report_data.get('recommendations', {})
+        recs = recommendations_obj.get('recommendations')
+        if hasattr(recs, 'empty') and not recs.empty:
+            # Choose informative columns if available
+            preferred_columns = [
+                'Machine_ID', 'Priority_Level', 'Recommended_Action',
+                'Top_Indicators', 'Anomaly_Count', 'Avg_Anomaly_Score',
+                'First_Anomaly_Time', 'Last_Anomaly_Time', 'Model_Confidence'
+            ]
+            available_cols = [col for col in preferred_columns if col in recs.columns]
+            trimmed_recs = recs[available_cols].copy() if available_cols else recs.copy()
+            snapshot['recommendations'] = trimmed_recs.head(25).to_dict(orient='records')
+
+            csv_path = os.path.join(self.output_dir, f"{prefix}_recommendations.csv")
+            trimmed_recs.to_csv(csv_path, index=False)
+        elif isinstance(recs, list) and recs:
+            snapshot['recommendations'] = recs[:25]
+        else:
+            snapshot['recommendations'] = []
+
+        with open(json_path, 'w') as f:
+            json.dump(snapshot, f, indent=2, default=str)
+
+        logging.info(f"📄 Publication snapshot saved to: {json_path}")
+        if csv_path:
+            logging.info(f"📊 Recommendation preview saved to: {csv_path}")
+
+        return {"json": json_path, "csv": csv_path}
+
     def _log_single_recommendation(self, index: int, rec: Dict[str, Any]):
         """Format a single recommendation line, skipping empty placeholders."""
         def _maybe_value(*keys):
@@ -181,9 +264,14 @@ class WorkflowReporter:
             avg_score = rec.get('Avg_Anomaly_Score')
             if avg_score is not None and not pd.isna(avg_score):
                 anomaly_info += f", avg score {avg_score:.4f}"
+            worst_score = rec.get('Most_Anomalous_Score')
+            if worst_score is not None and not pd.isna(worst_score):
+                anomaly_info += f", most anomalous {worst_score:.4f}"
             logging.info(f"      Anomaly Summary: {anomaly_info}")
 
         factors = _maybe_value('Contributing_Factors')
+        if not factors:
+            factors = _maybe_value('Top_Indicators')
         if factors and str(factors).strip():
             logging.info(f"      Factors: {factors}")
 
@@ -271,16 +359,15 @@ class WorkflowReporter:
         summary = self.generate_summary()
         
         logging.info("\n" + "="*80)
-        logging.info("🎉 WORKFLOW COMPLETION SUMMARY")
+        logging.info("🎉 WORKFLOW COMPLETION RECAP")
         logging.info("="*80)
-        
-        # Workflow statistics
-        logging.info(f"⏱️  Total Duration: {summary['workflow_duration_seconds']:.2f} seconds")
-        logging.info(f"📊 Steps Completed: {summary['successful_steps']}/{summary['total_steps']} ({summary['success_rate']*100:.1f}%)")
+        logging.info(f"🗂️  Goal: {self.report_data['summary'].get('workflow_goal', 'N/A')}")
+        logging.info(f"⏱️  Duration: {summary['workflow_duration_seconds']:.2f}s")
+        logging.info(f"📊 Steps: {summary['successful_steps']}/{summary['total_steps']} succeeded ({summary['success_rate']*100:.1f}%)")
         
         # Performance metrics
         if summary['performance_metrics']:
-            logging.info("\n🎯 MODEL PERFORMANCE:")
+            logging.info("\n🎯 MODEL PERFORMANCE SNAPSHOT")
             for metric, value in summary['performance_metrics'].items():
                 if isinstance(value, float):
                     if 'accuracy' in metric.lower() or 'r2' in metric.lower():
@@ -293,14 +380,14 @@ class WorkflowReporter:
         # Feature analysis summary
         if summary['feature_analysis']:
             fa = summary['feature_analysis']
-            logging.info(f"\n🧠 FEATURE ANALYSIS:")
+            logging.info(f"\n🧠 FEATURE ANALYSIS RECAP")
             logging.info(f"   Features Removed: {fa.get('features_removed', 0)}")
             logging.info(f"   Features Kept: {fa.get('features_kept', 0)}")
         
         # Recommendations summary
         if summary['recommendations']:
             rec = summary['recommendations']
-            logging.info(f"\n📋 RECOMMENDATIONS:")
+            logging.info(f"\n📋 PRESCRIPTIVE ACTIONS")
             logging.info(f"   Total Recommendations: {rec.get('total_recommendations', 0)}")
             if 'priority_distribution' in rec:
                 logging.info("   Priority Distribution:")
@@ -309,11 +396,24 @@ class WorkflowReporter:
         
         # Errors summary
         if self.report_data['errors']:
-            logging.info(f"\n❌ ERRORS ENCOUNTERED: {len(self.report_data['errors'])}")
+            logging.info(f"\n❌ ERRORS ENCOUNTERED ({len(self.report_data['errors'])})")
             for error in self.report_data['errors']:
                 logging.info(f"   • {error['error_type']}: {error['error_message']}")
-        
-        logging.info("\n" + "="*80)
+        else:
+            logging.info("\n✅ No errors recorded.")
+
+        logging.info("\n--- Stage Highlights ---")
+        for entry in self.report_data.get('stage_summaries', []):
+            logging.info(f"• {entry['stage_name']}: {entry['summary']}")
+
+        if self.report_data.get('hitl_events'):
+            logging.info("\n👤 HITL INTERACTIONS")
+            for event in self.report_data['hitl_events']:
+                meta = event.get("metadata") or {}
+                meta_text = ", ".join(f"{k}={v}" for k, v in meta.items())
+                logging.info(f"   {event['title']} → {event['decision']} ({meta_text})")
+
+        logging.info("\n" + "="*80 + "\n")
     
     def save_report(self, filename: Optional[str] = None):
         """Save the complete report to a JSON file."""

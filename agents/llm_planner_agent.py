@@ -149,6 +149,9 @@ class LLMPlannerAgent:
             "generate_recommendations": self._execute_optimization_step,
         }
 
+        # Internal store for stage summaries emitted after tool execution
+        self._stage_snapshot: Dict[str, Dict[str, Any]] = {}
+
     def run_workflow_with_llm(self, goal: str):
         """
         Executes a dynamic workflow orchestrated by an LLM based on a high-level goal.
@@ -158,6 +161,7 @@ class LLMPlannerAgent:
         
         # Log workflow start
         self.reporter.log_step("Workflow Initialization", True, f"Starting workflow with goal: {goal}")
+        self.reporter.report_data['workflow_goal'] = goal
         
         # Initialize intelligent summarizer
         self.summarizer.store_workflow_start(
@@ -226,6 +230,8 @@ class LLMPlannerAgent:
                 {"tool": tool_name, "reason": reason},
                 duration
             )
+            if success:
+                self._emit_stage_summary(tool_name)
             
             logging.info(f"[LLM Planner] Tool '{tool_name}' result: success={success}, message='{result_message}'")
             
@@ -303,8 +309,12 @@ class LLMPlannerAgent:
         
         # Save detailed report
         report_path = self.reporter.save_report()
+        publication_paths = self.reporter.save_publication_snapshot()
         
         logging.info("LLM-powered MAS application has finished its run.")
+        logging.info(f"📁 Publication snapshot: {publication_paths['json']}")
+        if publication_paths.get('csv'):
+            logging.info(f"📁 Publication recommendations CSV: {publication_paths['csv']}")
 
     def _build_workflow_prompt(self, context: Dict[str, Any]) -> str:
         """Build a structured prompt for the LLM with current workflow context."""
@@ -417,6 +427,18 @@ class LLMPlannerAgent:
             
         return None
 
+    def _emit_stage_summary(self, tool_name: str):
+        """
+        Emit a structured stage summary for the most recent tool run, if available.
+        """
+        snapshot = self._stage_snapshot.pop(tool_name, None)
+        if snapshot:
+            self.reporter.log_stage_summary(
+                snapshot.get("title", tool_name),
+                snapshot.get("summary", ""),
+                snapshot.get("stats", {})
+            )
+
     def _validate_decision(self, decision: Dict[str, Any]) -> bool:
         """Validate that the LLM decision has required fields and valid tool."""
         if not isinstance(decision, dict):
@@ -466,6 +488,24 @@ class LLMPlannerAgent:
             self.raw_data = self.raw_data[self.feature_columns + [self.target_column]]
             
         agent.inspect_data()
+
+        feature_list = ", ".join(self.feature_columns[:5])
+        if len(self.feature_columns) > 5:
+            feature_list += ", …"
+        stats = {
+            "Rows": f"{self.raw_data.shape[0]:,}",
+            "Columns": self.raw_data.shape[1],
+            "Selected Features": feature_list if self.feature_columns else "None"
+        }
+        if self.problem_type != 'anomaly_detection' and self.target_column:
+            stats["Target"] = self.target_column
+        dataset_name = os.path.basename(self.dataset_path)
+        summary = f"Loaded '{dataset_name}' for {self.problem_type} with curated feature set."
+        self._stage_snapshot["load_and_inspect_data"] = {
+            "title": "Stage · Data Loading & Inspection",
+            "summary": summary,
+            "stats": stats
+        }
         return True, f"Data loaded. Shape: {self.raw_data.shape}"
 
     def _execute_preprocessing_step(self):
@@ -507,6 +547,25 @@ class LLMPlannerAgent:
             self.preprocessed_data = pd.concat([processed_features, target], axis=1)
         else:
             self.preprocessed_data = processed_features
+
+        processed_rows, processed_cols = self.preprocessed_data.shape
+        numeric_cols = self.preprocessed_data.select_dtypes(include=[np.number]).shape[1]
+        categorical_cols = processed_cols - numeric_cols
+        summary = (
+            f"Preprocessed data ready ({processed_rows:,} rows × {processed_cols} columns) "
+            f"for {self.problem_type} stage."
+        )
+        stats = {
+            "Numeric Columns": numeric_cols,
+            "Non-numeric Columns": categorical_cols
+        }
+        if self.problem_type != 'anomaly_detection' and self.target_column:
+            stats["Target Appended"] = "Yes"
+        self._stage_snapshot["preprocess_data"] = {
+            "title": "Stage · Feature Engineering",
+            "summary": summary,
+            "stats": stats
+        }
             
         return True, f"Preprocessing complete. Shape: {self.preprocessed_data.shape}"
 
@@ -555,6 +614,14 @@ class LLMPlannerAgent:
                     tried_models = agent.tried_models.copy() if hasattr(agent, 'tried_models') else []
                     results = agent.run(force_retry=True)
                     adaptive_intelligence_used = True
+                    self.reporter.log_hitl_event(
+                        "Model Performance Decision",
+                        "retry",
+                        {
+                            "metric": metric_label,
+                            "value": round(float(metric_value), 4) if isinstance(metric_value, (int, float)) else metric_value
+                        }
+                    )
                     if results is None:
                         return False, "Dynamic analysis failed after retry."
                 else:
@@ -564,6 +631,14 @@ class LLMPlannerAgent:
                             "step": "low_performance_proceed",
                             "metric_label": metric_label,
                             "metric_value": float(metric_value)
+                        }
+                    )
+                    self.reporter.log_hitl_event(
+                        "Model Performance Decision",
+                        "proceed",
+                        {
+                            "metric": metric_label,
+                            "value": round(float(metric_value), 4) if isinstance(metric_value, (int, float)) else metric_value
                         }
                     )
         
@@ -626,6 +701,42 @@ class LLMPlannerAgent:
         else:  # anomaly_detection
             n_anomalies = results.get('n_anomalies', 'N/A')
             msg = f"Dynamic analysis complete. Model: {results.get('model')}, Anomalies detected: {n_anomalies}"
+
+        model_name = results.get('model') or results.get('model_name') or getattr(agent, 'model_name', 'Unknown')
+        analysis_stats: Dict[str, Any] = {
+            "Model": model_name,
+            "Samples Evaluated": f"{self.preprocessed_data.shape[0]:,}",
+            "Adaptive Retry": "Yes" if adaptive_intelligence_used else "No"
+        }
+        if self.problem_type == 'classification':
+            accuracy_val = results.get('accuracy')
+            if isinstance(accuracy_val, (int, float)):
+                analysis_stats["Accuracy"] = f"{accuracy_val:.4f}"
+        elif self.problem_type == 'regression':
+            r2_val = results.get('r2')
+            mse_val = results.get('mse')
+            if isinstance(r2_val, (int, float)):
+                analysis_stats["R²"] = f"{r2_val:.4f}"
+            if isinstance(mse_val, (int, float)):
+                analysis_stats["MSE"] = f"{mse_val:.6f}"
+        else:
+            anomalies = results.get('n_anomalies')
+            if isinstance(anomalies, (int, float)):
+                analysis_stats["Anomalies Detected"] = f"{int(anomalies):,}"
+            contamination = None
+            if getattr(agent, "model", None) is not None and hasattr(agent.model, "get_params"):
+                contamination = agent.model.get_params().get("contamination")
+            if contamination is None and isinstance(params, dict):
+                contamination = params.get('contamination')
+            if isinstance(contamination, (int, float)):
+                analysis_stats["Contamination"] = f"{contamination:.4f}"
+
+        summary_text = f"Completed model analysis for {self.problem_type} task."
+        self._stage_snapshot["analyze_data"] = {
+            "title": "Stage · Modeling & Evaluation",
+            "summary": summary_text,
+            "stats": analysis_stats
+        }
         return True, msg
 
     def _execute_optimization_step(self):
@@ -707,6 +818,14 @@ class LLMPlannerAgent:
                     "Recommendations approved.",
                     context={"step": "approval_confirmed"}
                 )
+                self.reporter.log_hitl_event(
+                    "Recommendation Review",
+                    "approved",
+                    {
+                        "actions": len(recommendations),
+                        "unique_machines": recommendations['Machine_ID'].nunique() if 'Machine_ID' in recommendations.columns else "N/A"
+                    }
+                )
                 self.recommendations = recommendations
                 break
             elif user_input == 'modify':
@@ -739,12 +858,27 @@ class LLMPlannerAgent:
                                 "Modified recommendations approved.",
                                 context={"step": "modified_approval_confirmed"}
                             )
+                            self.reporter.log_hitl_event(
+                                "Recommendation Review",
+                                "approved_after_modification",
+                                {
+                                    "actions": len(mod_recs),
+                                    "removed_indices": idx_list
+                                }
+                            )
                             self.recommendations = mod_recs
                             break
                         else:
                             self.hitl_interface.show_info_with_audit(
                                 "Modification not approved. Returning to review.",
                                 context={"step": "modification_rejected"}
+                            )
+                            self.reporter.log_hitl_event(
+                                "Recommendation Review",
+                                "modification_rejected",
+                                {
+                                    "removed_indices": idx_list
+                                }
                             )
                     except Exception as e:
                         self.hitl_interface.show_info_with_audit(
@@ -756,10 +890,22 @@ class LLMPlannerAgent:
                         "No modifications made.",
                         context={"step": "no_modifications"}
                     )
+                    self.reporter.log_hitl_event(
+                        "Recommendation Review",
+                        "modify_no_changes",
+                        {}
+                    )
             elif user_input == 'reject':
                 self.hitl_interface.show_info_with_audit(
                     "Recommendations rejected. No actions will be taken.",
                     context={"step": "recommendations_rejected"}
+                )
+                self.reporter.log_hitl_event(
+                    "Recommendation Review",
+                    "rejected",
+                    {
+                        "actions": len(recommendations)
+                    }
                 )
                 self.recommendations = pd.DataFrame()
                 break
@@ -768,7 +914,26 @@ class LLMPlannerAgent:
                     "Invalid input. Please enter 'approve', 'modify', or 'reject'.",
                     context={"step": "invalid_input", "user_input": user_input}
                 )
-
+        rec_df = getattr(self, "recommendations", pd.DataFrame())
+        summary = (
+            "Generated prescriptive maintenance plan with "
+            f"{len(rec_df)} recommendation(s)." if not rec_df.empty else
+            "No prescriptive actions were required."
+        )
+        stats = {
+            "Total Recommendations": len(rec_df),
+        }
+        if not rec_df.empty and 'Machine_ID' in rec_df.columns:
+            stats["Unique Machines"] = rec_df['Machine_ID'].nunique()
+        if not rec_df.empty:
+            top_row = rec_df.iloc[0]
+            if 'Machine_ID' in top_row and 'Recommended_Action' in top_row:
+                stats["Top Action"] = f"{top_row['Machine_ID']}: {top_row['Recommended_Action']}"
+        self._stage_snapshot["generate_recommendations"] = {
+            "title": "Stage · Prescriptive Optimization",
+            "summary": summary,
+            "stats": stats
+        }
         return True, "Optimization completed with human review."
 
     def _is_poor_performance(self, results: Dict[str, Any]) -> bool:
@@ -911,6 +1076,14 @@ class LLMPlannerAgent:
                     "Parameters approved.",
                     context={"step": "anomaly_params_approved"}
                 )
+                self.reporter.log_hitl_event(
+                    "Anomaly Parameter Approval",
+                    "approved",
+                    {
+                        "contamination": params.get("contamination"),
+                        "n_estimators": params.get("n_estimators")
+                    }
+                )
                 return params
             elif ans == 'modify':
                 cont = self.hitl_interface.prompt_user("Enter contamination (number or 'auto'): ").strip()
@@ -924,6 +1097,14 @@ class LLMPlannerAgent:
                         "Parameters modified successfully.",
                         data=modified_params,
                         context={"step": "anomaly_params_modified", "original": params, "modified": modified_params}
+                    )
+                    self.reporter.log_hitl_event(
+                        "Anomaly Parameter Approval",
+                        "modified",
+                        {
+                            "contamination": modified_params.get("contamination"),
+                            "n_estimators": modified_params.get("n_estimators")
+                        }
                     )
                     return modified_params
                 except Exception as e:
