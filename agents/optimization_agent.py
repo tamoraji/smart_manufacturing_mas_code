@@ -1,7 +1,8 @@
 
 import pandas as pd
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+import numpy as np
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [%(levelname)s] - %(message)s')
@@ -81,14 +82,21 @@ class OptimizationAgent:
         model_performance = self._assess_model_performance()
         logging.info(f"Model performance assessment: {model_performance}")
         
-        if 'train_predictions' in self.results:
+        train_predictions = self.results.get('train_predictions')
+        is_regression = (
+            self.results.get('r2') is not None and
+            train_predictions is not None and
+            np.issubdtype(np.asarray(train_predictions).dtype, np.number)
+        )
+
+        if is_regression:
             # Handle regression results
             results_df = self.results['test_data'].copy()
             results_df['Predicted_Value'] = self.results['test_predictions']
             
             # Calculate prediction thresholds based on training data distribution
-            train_mean = self.results['train_predictions'].mean()
-            train_std = self.results['train_predictions'].std()
+            train_mean = np.asarray(train_predictions).mean()
+            train_std = np.asarray(train_predictions).std()
             high_threshold = train_mean + 2 * train_std
             critical_threshold = train_mean + 3 * train_std
             

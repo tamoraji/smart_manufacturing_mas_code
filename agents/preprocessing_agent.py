@@ -5,6 +5,7 @@ from sklearn.preprocessing import StandardScaler, OneHotEncoder, MinMaxScaler, R
 from sklearn.impute import SimpleImputer, KNNImputer
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
+from scipy import sparse
 import sys
 import os
 
@@ -237,13 +238,18 @@ class PreprocessingAgent:
             
             logging.info("Fitting and transforming the data with the pipeline...")
             processed_data = pipeline.fit_transform(self.data)
-            
-            # Get feature names directly from the fitted pipeline.
-            # This is a robust way to handle column names after transformation,
-            # including one-hot encoding and passthrough columns.
             feature_names = pipeline.get_feature_names_out()
-            
-            processed_df = pd.DataFrame(processed_data, columns=feature_names, index=self.data.index)
+
+            # ColumnTransformer may return a sparse matrix when one-hot encoding is used.
+            # Convert sparse outputs to a pandas-compatible representation without forcing densification.
+            if sparse.issparse(processed_data):
+                processed_df = pd.DataFrame.sparse.from_spmatrix(
+                    processed_data,
+                    index=self.data.index,
+                    columns=feature_names
+                )
+            else:
+                processed_df = pd.DataFrame(processed_data, columns=feature_names, index=self.data.index)
             
             logging.info(f"Data preprocessing complete. New data shape: {processed_df.shape}")
             return processed_df
