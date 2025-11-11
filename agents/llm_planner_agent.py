@@ -12,6 +12,7 @@ from utils.hitl_interface import get_hitl_interface, HitlInterface
 from utils.reporting import create_reporter, WorkflowReporter
 from utils.intelligent_summarization import create_summarizer, IntelligentSummarizer
 import pandas as pd
+import numpy as np
 import json
 
 # Load environment variables and configure logging
@@ -797,16 +798,44 @@ class LLMPlannerAgent:
 
     # ---- New helper methods for LLM-driven hyperparameter suggestions and HITL ----
     def _build_dataset_summary(self, df: pd.DataFrame) -> str:
-        """Create a compact dataset summary for LLM prompts."""
+        """Create a compact-yet-informative dataset summary for LLM prompts."""
         num_rows, num_cols = df.shape
         miss_pct = df.isnull().mean().mean() * 100
-        numeric_count = len(df.select_dtypes(include=['int64', 'float64']).columns)
-        cat_count = len(df.select_dtypes(include=['object', 'category']).columns)
-        summary = (
-            f"rows={num_rows}, cols={num_cols}, missing_pct={miss_pct:.1f}%, "
-            f"numeric_cols={numeric_count}, categorical_cols={cat_count}"
-        )
-        return summary
+        numeric_df = df.select_dtypes(include=[np.number])
+        categorical_df = df.select_dtypes(include=['object', 'category'])
+
+        summary_lines = [
+            f"rows={num_rows}, cols={num_cols}, missing_pct={miss_pct:.2f}%, "
+            f"numeric_cols={numeric_df.shape[1]}, categorical_cols={categorical_df.shape[1]}"
+        ]
+
+        approx_outlier_frac = None
+        feature_stats = []
+
+        if not numeric_df.empty:
+            # Descriptive stats for up to the first five numeric columns
+            desc = numeric_df.describe(percentiles=[0.25, 0.5, 0.75]).transpose()
+            for col in desc.index[:5]:
+                stats = desc.loc[col]
+                feature_stats.append(
+                    f"{col}: mean={stats['mean']:.3f}, std={stats['std']:.3f}, "
+                    f"q1={stats['25%']:.3f}, median={stats['50%']:.3f}, q3={stats['75%']:.3f}, "
+                    f"min={stats['min']:.3f}, max={stats['max']:.3f}"
+                )
+
+            # Approximate outlier fraction via z-score > 3 heuristic
+            stds = numeric_df.std(ddof=0).replace(0, np.nan)
+            if not stds.isna().all():
+                zscores = numeric_df.sub(numeric_df.mean()).div(stds)
+                approx_outlier_frac = float(((zscores.abs() > 3).any(axis=1)).mean())
+
+        if feature_stats:
+            summary_lines.append("feature_stats:\n  " + "\n  ".join(feature_stats))
+
+        if approx_outlier_frac is not None and not np.isnan(approx_outlier_frac):
+            summary_lines.append(f"approx_outlier_fraction={approx_outlier_frac:.4f}")
+
+        return "\n".join(summary_lines)
 
     def _ask_llm_for_anomaly_params(self, dataset_summary: str, use_decision_llm: bool = False) -> Dict[str, Any]:
         """
@@ -814,8 +843,13 @@ class LLMPlannerAgent:
         Expected JSON response: {"contamination": 0.05, "n_estimators": 200, "reason": "..."}
         """
         prompt = (
-            f"Dataset summary: {dataset_summary}\n"
-            "We will run an IsolationForest for anomaly detection. Suggest values for 'contamination' (or 'auto' to estimate), 'n_estimators' (int), and a short reason. Return a JSON object like {\"contamination\": 0.05, \"n_estimators\": 200, \"reason\": \"...\"}."
+            "You are configuring an IsolationForest for anomaly detection.\n"
+            f"Dataset profile:\n{dataset_summary}\n"
+            "Please suggest hyperparameters with this guidance:\n"
+            "- Provide 'contamination' as a float between 0.001 and 0.2 whenever the summary offers enough signal (e.g., via approx_outlier_fraction). Use 'auto' only if a numeric estimate is unsafe.\n"
+            "- Provide 'n_estimators' as an integer (typical range 100-400) balancing accuracy vs. runtime.\n"
+            "- Add a concise 'reason' referencing the dataset characteristics.\n"
+            "Respond strictly with JSON, e.g. {\"contamination\": 0.04, \"n_estimators\": 256, \"reason\": \"...\"}."
         )
         llm = self.decision_llm_agent if (use_decision_llm and self.decision_llm_agent is not None) else self.llm_agent
         which = 'decision LLM' if (use_decision_llm and self.decision_llm_agent is not None) else 'planner LLM'
@@ -830,9 +864,28 @@ class LLMPlannerAgent:
                     parsed = None
             if parsed:
                 # sanitize
+                raw_cont = parsed.get('contamination', 'auto')
+                contamination = raw_cont
+                try:
+                    if isinstance(raw_cont, str) and raw_cont.strip().lower() != 'auto':
+                        contamination = float(raw_cont)
+                    elif isinstance(raw_cont, (int, float)):
+                        contamination = float(raw_cont)
+                except (ValueError, TypeError):
+                    contamination = 'auto'
+
+                if isinstance(contamination, (int, float)):
+                    contamination = float(np.clip(contamination, 0.001, 0.2))
+
+                n_estimators_raw = parsed.get('n_estimators', 200)
+                try:
+                    n_estimators = int(float(n_estimators_raw))
+                except (TypeError, ValueError):
+                    n_estimators = 200
+
                 return {
-                    'contamination': parsed.get('contamination', 'auto'),
-                    'n_estimators': int(parsed.get('n_estimators', 200)),
+                    'contamination': contamination,
+                    'n_estimators': max(50, n_estimators),
                     'reason': parsed.get('reason', '') + f" (by {which})"
                 }
         # Fallback defaults

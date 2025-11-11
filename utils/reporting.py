@@ -122,23 +122,11 @@ class WorkflowReporter:
                 if not recs.empty:
                     logging.info("\n📋 Detailed Recommendations:")
                     for i, (_, rec) in enumerate(recs.iterrows(), 1):
-                        logging.info(f"\n   {i}. {rec.get('Action', 'N/A')}")
-                        logging.info(f"      Priority: {rec.get('Priority_Level', 'N/A')}")
-                        logging.info(f"      Confidence: {rec.get('Model_Confidence', 'N/A')}")
-                        if 'Contributing_Factors' in rec:
-                            logging.info(f"      Factors: {rec['Contributing_Factors']}")
-                        if 'Estimated_Cost' in rec:
-                            logging.info(f"      Cost: {rec['Estimated_Cost']}")
+                        self._log_single_recommendation(i, rec)
             elif recs:  # It's a list or other iterable
                 logging.info("\n📋 Detailed Recommendations:")
                 for i, rec in enumerate(recs, 1):
-                    logging.info(f"\n   {i}. {rec.get('Action', 'N/A')}")
-                    logging.info(f"      Priority: {rec.get('Priority_Level', 'N/A')}")
-                    logging.info(f"      Confidence: {rec.get('Model_Confidence', 'N/A')}")
-                    if 'Contributing_Factors' in rec:
-                        logging.info(f"      Factors: {rec['Contributing_Factors']}")
-                    if 'Estimated_Cost' in rec:
-                        logging.info(f"      Cost: {rec['Estimated_Cost']}")
+                    self._log_single_recommendation(i, rec)
     
     def log_error(self, error_type: str, error_message: str, context: Optional[Dict[str, Any]] = None):
         """Log errors with enhanced context."""
@@ -156,6 +144,61 @@ class WorkflowReporter:
             for key, value in context.items():
                 logging.error(f"   Context: {key} = {value}")
     
+    def _log_single_recommendation(self, index: int, rec: Dict[str, Any]):
+        """Format a single recommendation line, skipping empty placeholders."""
+        def _maybe_value(*keys):
+            for key in keys:
+                if key in rec and rec[key] is not None:
+                    val = rec[key]
+                    if isinstance(val, float) and pd.isna(val):
+                        continue
+                    return val
+            return None
+
+        action_value = _maybe_value('Action', 'Recommended_Action')
+        machine_id = _maybe_value('Machine_ID')
+        if action_value and machine_id and str(action_value).strip().lower() not in {'n/a', 'na'}:
+            action_text = f"Machine {machine_id}: {action_value}"
+        elif action_value:
+            action_text = str(action_value)
+        elif machine_id:
+            action_text = f"Machine {machine_id}"
+        else:
+            action_text = "Action unavailable"
+
+        logging.info(f"\n   {index}. {action_text}")
+
+        priority = _maybe_value('Priority_Level', 'Priority')
+        if priority and str(priority).strip().lower() not in {'n/a', 'unknown', 'none', ''}:
+            logging.info(f"      Priority: {priority}")
+
+        confidence = _maybe_value('Model_Confidence', 'Confidence')
+        if confidence and str(confidence).strip().lower() not in {'n/a', 'unknown', 'none', ''}:
+            logging.info(f"      Confidence: {confidence}")
+
+        if 'Anomaly_Count' in rec and not pd.isna(rec['Anomaly_Count']):
+            anomaly_info = f"{int(rec['Anomaly_Count'])} instances"
+            avg_score = rec.get('Avg_Anomaly_Score')
+            if avg_score is not None and not pd.isna(avg_score):
+                anomaly_info += f", avg score {avg_score:.4f}"
+            logging.info(f"      Anomaly Summary: {anomaly_info}")
+
+        factors = _maybe_value('Contributing_Factors')
+        if factors and str(factors).strip():
+            logging.info(f"      Factors: {factors}")
+
+        cost = _maybe_value('Estimated_Cost')
+        if cost and str(cost).strip().lower() not in {'n/a', 'unknown', 'none', ''}:
+            logging.info(f"      Cost: {cost}")
+
+        timeframe = _maybe_value('Timeframe')
+        if timeframe and str(timeframe).strip().lower() not in {'n/a', 'unknown', 'none', ''}:
+            logging.info(f"      Timeframe: {timeframe}")
+
+        reason = _maybe_value('Reason_for_Action')
+        if reason and str(reason).strip():
+            logging.info(f"      Reason: {reason}")
+
     def generate_summary(self):
         """Generate a comprehensive workflow summary."""
         total_steps = len(self.report_data['steps'])
