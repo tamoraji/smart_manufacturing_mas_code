@@ -371,8 +371,6 @@ class LLMPlannerAgent:
             "- IMPORTANT: If you see 'R²:', 'Accuracy:', or 'Anomalies detected:' in completed steps, the analysis is complete",
             "- Do NOT repeat the same tool if it was already successful in previous steps",
             "- If a tool failed multiple times, try a different tool or set finish=true to end gracefully",
-            "- Consider the quality of results: poor performance (R² < 0.1) may require different approaches",
-            "- ADAPTIVE INTELLIGENCE: The system will automatically try multiple models if performance is poor",
             "- If you see 'ADAPTIVE INTELLIGENCE' in logs, the system is trying different models for better performance"
         ])
         
